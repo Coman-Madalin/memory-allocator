@@ -9,12 +9,12 @@
 #include "osmem.h"
 #include "block_meta.h"
 
-#define FAIL(assertion, feedback)										\
-	do {													\
-		if (assertion) {										\
-			fprintf(stderr, "(%s, %d): %s", __FILE__, __LINE__, feedback);				\
-			exit(SIGABRT);										\
-		}												\
+#define FAIL(assertion, feedback)											\
+	do {																	\
+		if (assertion) {													\
+			fprintf(stderr, "(%s, %d): %s", __FILE__, __LINE__, feedback);	\
+			exit(SIGABRT);													\
+		}																	\
 	} while (0)
 
 #define METADATA_SIZE		(sizeof(struct block_meta))
