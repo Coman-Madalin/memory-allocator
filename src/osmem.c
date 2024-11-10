@@ -131,8 +131,52 @@ void add_free_block(struct block_meta *block) {
 
 // TODO: make free_blocks circular
 // TODO: use DIE for sbrk and similar function calls
+void *reuse_block_brk(size_t size) {
+	struct block_meta *curr = free_blocks;
+
+	while (curr->next != NULL) {
+		curr = curr->next;
+	}
+
+	struct block_meta *last_used_block = used_blocks;
+	while (last_used_block->next != NULL && last_used_block < curr) {
+		last_used_block = last_used_block->next;
+	}
+
+	size_t size_to_add = size - curr->size;
+	size_t payload_padding = calculate_padding((size_t)curr + size);
+
+	if (curr < last_used_block) {
+		long free_memory = last_used_block - curr - METADATA_SIZE;
+		// TODO: maybe rewrite this
+		if ((long)(size_to_add + payload_padding) < free_memory) {
+			remove_block(curr);
+			curr->size = size;
+			add_used_block(curr);
+			return curr;
+		}
+		// this means that we can't expand the last free block, and we want to
+		// make a new one with the method already present in increase_brk
+		return (void *)-1;
+	}
+
+	// curr block is the last allocated block with brk
+	printf("BRK TRY TO EXPAND: %d\n\n", size_to_add + payload_padding);
+	sbrk(size_to_add + payload_padding);
+
+	remove_block(curr);
+	curr->size = size + payload_padding;
+	add_used_block(curr);
+	return curr;
+}
 
 void *increase_brk(size_t size) {
+	if (free_blocks != NULL) {
+		void *return_value = reuse_block_brk(size);
+		if ((long)return_value != -1)
+			return return_value;
+	}
+
 	size_t payload_padding = calculate_padding(size);
 
 	// TODO: might need to get current brk position with sbrk(0) to pad the
@@ -154,6 +198,8 @@ void *os_malloc(size_t size) {
 	if (size == 0) {
 		return NULL;
 	}
+
+	printf("TRY TO MALLOC: %d\n", size);
 
 	struct block_meta *new_used_block = NULL;
 	if (size < MMAP_THRESHOLD) {
@@ -194,6 +240,7 @@ void *os_malloc(size_t size) {
 			new_used_block->size = size;
 			add_free_block(new_free_block);
 		}
+		add_used_block(new_used_block);
 	} else {
 		size_t payload_padding = calculate_padding(size);
 		new_used_block = mmap(NULL, size + METADATA_SIZE + payload_padding,
@@ -204,7 +251,6 @@ void *os_malloc(size_t size) {
 		new_used_block->status = STATUS_MAPPED;
 	}
 
-	add_used_block(new_used_block);
 	return ((void *)new_used_block + METADATA_SIZE);
 }
 
