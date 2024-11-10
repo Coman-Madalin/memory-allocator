@@ -244,8 +244,8 @@ void *os_malloc(size_t size) {
 
 		// enough space for another free_block
 		if (new_free_block_size >= METADATA_SIZE + 1) {
-			new_free_block->size = free_block->size - METADATA_SIZE - size;
 //			printf("SAME?: %d\n", new_free_block_size);
+			new_free_block->size = new_free_block_size - METADATA_SIZE;
 
 			new_free_block->status = STATUS_FREE;
 			new_free_block->next = new_free_block->prev = NULL;
