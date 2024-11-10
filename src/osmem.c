@@ -75,6 +75,7 @@ void *find_place_brk(size_t size) {
 
 void add_used_block(struct block_meta *block) {
 	block->prev = block->next = NULL;
+	block->status = STATUS_ALLOC;
 
 	if (used_blocks == NULL) {
 		used_blocks = block;
@@ -101,6 +102,7 @@ void add_used_block(struct block_meta *block) {
 }
 
 void add_free_block(struct block_meta *block) {
+	block->status = STATUS_FREE;
 	block->prev = block->next = NULL;
 
 	if (free_blocks == NULL) {
@@ -130,26 +132,7 @@ void add_free_block(struct block_meta *block) {
 // TODO: make free_blocks circular
 // TODO: use DIE for sbrk and similar function calls
 
-void *reuse_block_brk(size_t size) {
-	struct block_meta *curr = free_blocks;
-
-	while (curr->next != NULL) {
-		curr = curr->next;
-	}
-
-	size_t size_to_add = size - curr->size;
-	size_t payload_padding = calculate_padding((size_t)curr + size);
-
-	printf("BRK TRY TO ALLOCATE: %d\n\n", size_to_add + payload_padding);
-	sbrk(size_to_add + payload_padding + 1);
-
-	return curr;
-}
-
 void *increase_brk(size_t size) {
-	if (free_blocks != NULL)
-		return reuse_block_brk(size);
-
 	size_t payload_padding = calculate_padding(size);
 
 	// TODO: might need to get current brk position with sbrk(0) to pad the
@@ -230,11 +213,13 @@ void os_free(void *ptr) {
 		return;
 
 	struct block_meta *used_block = (ptr - METADATA_SIZE);
-	if (used_block->status == STATUS_ALLOC)
-		return;
-
-	size_t payload_padding = calculate_padding(used_block->size);
-	munmap(used_block, METADATA_SIZE + used_block->size + payload_padding);
+	if (used_block->status == STATUS_ALLOC) {
+		remove_block(used_block);
+		add_free_block(used_block);
+	} else {
+		size_t payload_padding = calculate_padding(used_block->size);
+		munmap(used_block, METADATA_SIZE + used_block->size + payload_padding);
+	}
 }
 
 void *os_calloc(size_t nmemb, size_t size) {
