@@ -27,7 +27,7 @@ void prealloc_heap(void)
 	free_blocks = sbrk(128 * MULT_KB);
 
 	if ((long)free_blocks == -1) {
-		printf("An error has ocurred while preallocating the heap");
+		//printf("An error has ocurred while preallocating the heap");
 		exit(-1);
 	}
 
@@ -57,27 +57,6 @@ void remove_block(struct block_meta *block)
 	block->prev = block->next = NULL;
 }
 
-void print_free_blocks(void)
-{
-	printf("FREE BLOCKS:\n");
-	struct block_meta *curr = free_blocks;
-
-	while (curr != NULL) {
-		printf("%u with size: %u\n", curr, curr->size);
-		curr = curr->next;
-	}
-}
-
-void print_used_blocks(void)
-{
-	printf("USED BLOCKS:\n");
-	struct block_meta *curr = used_blocks;
-
-	while (curr != NULL) {
-		printf("%u with size: %u\n", curr, curr->size);
-		curr = curr->next;
-	}
-}
 
 void *get_next_block(struct block_meta *block)
 {
@@ -87,7 +66,7 @@ void *get_next_block(struct block_meta *block)
 		while (last_used_block->next != NULL && last_used_block <= block)
 			last_used_block = last_used_block->next;
 
-	printf("last_used_block: %u\n", last_used_block);
+	////printf("last_used_block: %u\n", last_used_block);
 
 	if (free_blocks == NULL)
 		return last_used_block;
@@ -97,10 +76,10 @@ void *get_next_block(struct block_meta *block)
 	while (last_free_block->next != NULL && last_free_block <= block)
 		last_free_block = last_free_block->next;
 
-	printf("last_free_block: %u\n", last_free_block);
+	//printf("last_free_block: %u\n", last_free_block);
 
 	if (last_used_block == NULL) {
-		printf("RETURNED FREE BECAUSE NULL!!!!\n");
+		//printf("RETURNED FREE BECAUSE NULL!!!!\n");
 		return last_free_block;
 	}
 
@@ -123,12 +102,12 @@ void *get_next_block(struct block_meta *block)
 			}
 			return last_free_block;
 		}
-		printf("RETURNED USED!!!!\n");
+		//printf("RETURNED USED!!!!\n");
 
 		return last_used_block;
 	}
 
-	printf("RETURNED FREE!!!!\n");
+	//printf("RETURNED FREE!!!!\n");
 
 	return last_free_block;
 }
@@ -138,8 +117,7 @@ void coalesce_free_blocks(void)
 	struct block_meta *curr = free_blocks;
 
 	while (curr->next != NULL) {
-		if ((size_t)curr + curr->size + METADATA_SIZE ==
-			(size_t)curr->next) {
+		if ((size_t)curr + curr->size + METADATA_SIZE == (size_t)curr->next) {
 			curr->size += curr->next->size + METADATA_SIZE;
 			remove_block(curr->next);
 			continue;
@@ -152,16 +130,23 @@ void coalesce_free_blocks(void)
 void *find_place_brk(size_t size)
 {
 	struct block_meta *curr = free_blocks;
+	struct block_meta *most_efficient_block = curr;
 
 	while (curr != NULL) {
-		if (curr->size >= size)
-			break;
-
+		if (curr->size >= size) {
+			if (curr->size < most_efficient_block->size ||
+				most_efficient_block->size < size) {
+				most_efficient_block = curr;
+			}
+		}
 		curr = curr->next;
 	}
 
-	remove_block(curr);
-	return curr;
+	if (most_efficient_block != NULL && most_efficient_block->size < size)
+		return NULL;
+
+	remove_block(most_efficient_block);
+	return most_efficient_block;
 }
 
 void add_used_block(struct block_meta *block)
@@ -170,6 +155,13 @@ void add_used_block(struct block_meta *block)
 	block->status = STATUS_ALLOC;
 
 	if (used_blocks == NULL) {
+		used_blocks = block;
+		return;
+	}
+
+	if (used_blocks > block) {
+		block->next = used_blocks;
+		used_blocks->prev = block;
 		used_blocks = block;
 		return;
 	}
@@ -198,6 +190,13 @@ void add_free_block(struct block_meta *block)
 	block->prev = block->next = NULL;
 
 	if (free_blocks == NULL) {
+		free_blocks = block;
+		return;
+	}
+
+	if (free_blocks > block) {
+		block->next = free_blocks;
+		free_blocks->prev = block;
 		free_blocks = block;
 		return;
 	}
@@ -288,8 +287,8 @@ void *increase_brk(size_t size)
 	// TODO: might need to get current brk position with sbrk(0) to pad the
 	//  metadata too
 
-	struct block_meta *used_block = sbrk(METADATA_SIZE
-										 + size + payload_padding);
+	struct block_meta *used_block = sbrk(
+			METADATA_SIZE + size + payload_padding);
 	used_block->size = size + payload_padding;
 	used_block->status = STATUS_ALLOC;
 
@@ -298,26 +297,47 @@ void *increase_brk(size_t size)
 	return used_block;
 }
 
+//static int commands_after_found = 0;
+
 // TODO: rewrite this at some point more efficiently
 void *os_malloc(size_t size)
 {
-	if (size == 0)
+//	if (size == 1934) {
+//		commands_after_found = 1;
+//		//printf("\n\n\n\n!!!!!!!!!!!!!!!PROBLEM!!!!!!!!!!!!!!\n\n\n\n");
+//	}
+	if (size == 0) {
 		return NULL;
+	}
+
+//	if (commands_after_found > 0) {
+//		if (commands_after_found == 3)
+//			exit(33);
+//		commands_after_found++;
+//	}
+
+	//printf("\nTRY TO MALLOC: %d\n", size);
+
+	//printf("BEFORE MALLOC: \n");
+ 	//printf("\n");
 
 	struct block_meta *new_used_block = NULL;
-
-	if (size + METADATA_SIZE < MMAP_THRESHOLD) {
-		if (used_blocks == NULL && free_blocks == NULL)
+	if (size < MMAP_THRESHOLD) {
+		if (used_blocks == NULL && free_blocks == NULL) {
 			prealloc_heap();
+		}
 
 		struct block_meta *free_block = find_place_brk(size);
+		//printf("free_block: %u\n", free_block);
 
 		if (free_block == NULL) {
-			printf("Not enough free memory in malloc while using brk!\n");
-			printf("Trying to increase brk...\n");
-			new_used_block = increase_brk(size);
+			//printf("Not enough free memory in malloc while using brk!\n");
+			//printf("Trying to increase brk...\n");
+			struct block_meta *used_block = increase_brk(size);
+			//printf("AFTER INCREASE BRK: \n");
+			//printf("\n");
 
-			return ((void *)new_used_block + METADATA_SIZE);
+			return ((void *)used_block + METADATA_SIZE);
 		}
 
 		new_used_block = free_block;
@@ -327,27 +347,37 @@ void *os_malloc(size_t size)
 
 		size_t payload_padding = calculate_padding((size_t)new_free_block);
 
+//		//printf("PAYLOAD PADDING: %d\n", payload_padding);
+
 		new_free_block = (void *)new_free_block + payload_padding;
+
+//		//printf("fsize: %d, usize: %d\n", free_block->size,
+//			   size + payload_padding);
 
 		long new_free_block_size =
 				free_block->size - size - payload_padding;
+
+		//printf("NEW FREE BLOCK SIZE: %d\n", new_free_block_size);
 
 		new_used_block->status = STATUS_ALLOC;
 
 		// enough space for another free_block
 		if (new_free_block_size >= METADATA_SIZE + 1) {
 			new_free_block->size = new_free_block_size - METADATA_SIZE;
+//			//printf("SAME?: %d\n", new_free_block->size);
 
 			new_free_block->status = STATUS_FREE;
 			new_free_block->next = new_free_block->prev = NULL;
 
+			//added payload
 			new_used_block->size = size + payload_padding;
 			add_free_block(new_free_block);
+		} else {
+			//printf("Not enough remaining space to split!\n");
 		}
 		add_used_block(new_used_block);
 	} else {
 		size_t payload_padding = calculate_padding(size);
-
 		new_used_block = mmap(NULL, size + METADATA_SIZE + payload_padding,
 							  PROT_READ | PROT_WRITE,
 							  MAP_PRIVATE | MAP_ANON,
@@ -357,11 +387,20 @@ void *os_malloc(size_t size)
 		new_used_block->status = STATUS_MAPPED;
 	}
 
+	//printf("AFTER MALLOC2: \n");
+	//printf("\n");
+	//printf("MALLOC WILL RETURN: %u\n", (void *)new_used_block + METADATA_SIZE);
 	return ((void *)new_used_block + METADATA_SIZE);
 }
 
 void os_free(void *ptr)
 {
+
+//	if (commands_after_found > 0) {
+//		if (commands_after_found == 3)
+//			exit(33);
+//		commands_after_found++;
+//	}
 	if (ptr == 0)
 		return;
 
@@ -374,13 +413,21 @@ void os_free(void *ptr)
 	} else {
 		size_t payload_padding = calculate_padding(used_block->size);
 
-		munmap(used_block,
-			   METADATA_SIZE + used_block->size + payload_padding);
+		munmap(used_block, METADATA_SIZE + used_block->size + payload_padding);
 	}
 }
 
 void *os_calloc(size_t nmemb, size_t size)
 {
+	//printf("BEFORE CALLOC: \n");
+	//printf("\n");
+
+//	if (commands_after_found > 0) {
+//		if (commands_after_found == 3)
+//			exit(33);
+//		commands_after_found++;
+//	}
+
 	int total_size = nmemb * size;
 
 	if (total_size == 0)
@@ -395,21 +442,24 @@ void *os_calloc(size_t nmemb, size_t size)
 		struct block_meta *free_block = find_place_brk(total_size);
 
 		if (free_block == NULL) {
-			printf("Not enough free memory in malloc while using brk!\n");
-			printf("Trying to increase brk...\n");
+//			//printf("Not enough free memory in malloc while using brk!\n");
+//			//printf("Trying to increase brk...\n");
 			new_used_block = increase_brk(total_size);
 			u_char *bytes_new_used_block = (u_char *)new_used_block;
 
 			for (size_t i = 0; i < new_used_block->size; i++)
 				bytes_new_used_block[i + METADATA_SIZE] = 0;
 
+			//printf("AFTER CALLOC1: \n");
+			//printf("\n");
+
 			return ((void *)new_used_block + METADATA_SIZE);
 		}
 
 		new_used_block = free_block;
 
-		struct block_meta *new_free_block = (void *)free_block +
-											METADATA_SIZE + total_size;
+		struct block_meta *new_free_block =
+				(void *)free_block + METADATA_SIZE + total_size;
 
 		size_t payload_padding = calculate_padding((size_t)new_free_block);
 
@@ -436,8 +486,7 @@ void *os_calloc(size_t nmemb, size_t size)
 
 		new_used_block = mmap(NULL,
 							  total_size + METADATA_SIZE + payload_padding,
-							  PROT_READ | PROT_WRITE,
-							  MAP_PRIVATE | MAP_ANON,
+							  PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON,
 							  -1, 0);
 
 		new_used_block->size = total_size;
@@ -449,46 +498,55 @@ void *os_calloc(size_t nmemb, size_t size)
 	for (size_t i = 0; i < new_used_block->size; i++)
 		bytes_new_used_block[i + METADATA_SIZE] = 0;
 
+	//printf("AFTER CALLOC2: \n");
+	//printf("\n");
+
 	return ((void *)new_used_block + METADATA_SIZE);
 }
 
 void *os_realloc(void *ptr, size_t size)
 {
-	// NU ELIMINA BLOCK UL FREE
-	if (size == 4000)
-		printf("\n\n\n!!!!!PROBLEM!!!!\n\n\n");
+	if (size == 47249) {
+		//printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n!!!!!!!!!!!!!!!PROBLEM!!!!!!!!!!!!!!\n\n\n\n");
+	}
+
+	//printf("realloc(%u, %d)\n", ptr - METADATA_SIZE, size);
+	//printf("BEFORE:\n");
+
+
+
+//	if (commands_after_found > 0) {
+//		if (commands_after_found == 3)
+//			exit(33);
+//		commands_after_found++;
+//	}
 
 	if (ptr == NULL) {
-		printf("Because ptr = NULL, malloc will be called\n");
+//		//printf("Because ptr = NULL, malloc will be called\n");
 		return os_malloc(size);
 	}
 	if (size == 0) {
-		printf("Because size = 0, free will be called\n");
+//		//printf("Because size = 0, free will be called\n");
 		os_free(ptr);
 		return NULL;
 	}
 
-	printf("realloc(%u, %d)\n", ptr - METADATA_SIZE, size);
-	printf("BEFORE:\n");
-	print_free_blocks();
-	print_used_blocks();
-
 	struct block_meta *used_block = ptr - METADATA_SIZE;
 
 	if (used_block->status == STATUS_FREE) {
-		printf("The pointer that was meant to be realloc'ed is free\n");
+		//printf("The pointer that was meant to be realloc'ed is free\n");
 		return NULL;
 	}
 
 	size_t tmp_padding = calculate_padding(size);
 
 	if (used_block->size == size + tmp_padding) {
-		printf("REQUESTED SIZE IS EQUAL WITH THE CURRENT SIZE!\n");
+		//printf("REQUESTED SIZE IS EQUAL WITH THE CURRENT SIZE!\n");
 		return ptr;
 	}
 
 	if (used_block->status == STATUS_MAPPED) {
-		printf("The pointer that was meant to be realloc'ed is mapped\n");
+		//printf("The pointer that was meant to be realloc'ed is mapped\n");
 		struct block_meta *new_used_block = os_malloc(size) - METADATA_SIZE;
 
 		u_char *bytes_new_used_block = (u_char *)new_used_block;
@@ -511,7 +569,7 @@ void *os_realloc(void *ptr, size_t size)
 	size_t remaining_size = used_block->size - size - payload_padding;
 
 	if (size < used_block->size) {
-		printf("The pointer that was meant to be realloc'ed will be truncated\n");
+		//printf("The pointer that was meant to be realloc'ed will be truncated\n");
 
 
 		//TODO: maybe make this an auxiliary function that free can use too
@@ -520,9 +578,8 @@ void *os_realloc(void *ptr, size_t size)
 		//  We leave the size as it is because there is not enough space for
 		//  another free block?
 		if (remaining_size > METADATA_SIZE + 1) {
-			struct block_meta *new_free_block = (void *)used_block +
-												METADATA_SIZE +
-												size + payload_padding;
+			struct block_meta *new_free_block =
+					(void *)used_block + METADATA_SIZE + size + payload_padding;
 
 			new_free_block->size = remaining_size - METADATA_SIZE;
 			add_free_block(new_free_block);
@@ -535,13 +592,13 @@ void *os_realloc(void *ptr, size_t size)
 
 	struct block_meta *next_block = get_next_block(used_block);
 
-	printf("NEXT_BLOCK = %u\n", next_block);
+	//printf("NEXT_BLOCK = %u\n", next_block);
 
 	// If we have enough space until the next block, we expand the used block
 //	if (used_block + used_block->size + size + payload_padding < next_block) {
 	if ((void *)used_block + METADATA_SIZE + size + payload_padding <
 		(void *)next_block) {
-		printf("WE HAVE ENOUGH SPACe UNTIL NEXT BLOCK\n");
+		//printf("WE HAVE ENOUGH SPACe UNTIL NEXT BLOCK\n");
 
 		used_block->size = size + payload_padding;
 		return ptr;
@@ -549,53 +606,54 @@ void *os_realloc(void *ptr, size_t size)
 
 	// the end of the current block is equal to current heap size so we can
 	// just increase it
-	if (used_block == next_block) {
-		printf("WE CAN JUST INCREASE IT\n");
-		size_t remaining_size_rename = size + payload_padding -
-									   used_block->size;
-		printf("INCREASE WITH: %d\n", remaining_size_rename);
+	if (used_block >= next_block) {
+		//printf("WE CAN JUST INCREASE IT\n");
+		size_t remaining_size_rename =
+				size + payload_padding - used_block->size;
+		//printf("INCREASE WITH: %d\n", remaining_size_rename);
 
 		sbrk(remaining_size_rename);
 		used_block->size = size + payload_padding;
 		return ptr;
 	}
 
-	printf("NEXt block IS FREE: %d\n", next_block->status);
-	printf("NEEDED END ADDRESS: %u\n",
-		   (void *)used_block + METADATA_SIZE + size +
-		   payload_padding);
-	printf("AVAILABLE END ADDRESS: %u\n", (void *)next_block + METADATA_SIZE +
-										  next_block->size);
+	//printf("NEXt block IS FREE: %d\n", next_block->status);
+	//printf("NEEDED END ADDRESS: %u\n",
+//		   (void *)used_block + METADATA_SIZE + size + payload_padding);
+	//printf("AVAILABLE END ADDRESS: %u\n",
+//		   (void *)next_block + METADATA_SIZE + next_block->size);
 
-	if (next_block->status == STATUS_FREE
-		&& (void *)used_block + METADATA_SIZE + size + payload_padding <=
-		   (void *)next_block + METADATA_SIZE + next_block->size) {
-		printf("WE have enough space if we use the free block too!\n");
+	if (next_block->status == STATUS_FREE &&
+		(void *)used_block + METADATA_SIZE + size + payload_padding <=
+		(void *)next_block + METADATA_SIZE + next_block->size) {
+		//printf("WE have enough space if we use the free block too!\n");
 
-		long free_size = (void *)next_block + next_block->size -
-						 (void *)used_block - size - payload_padding;
+		long free_size =
+				(void *)next_block + next_block->size - (void *)used_block -
+				size - payload_padding;
 
-		printf("FRee SIZEEAea: %d\n", free_size);
+		//printf("FRee SIZEEAea: %d\n", free_size);
 
 		used_block->size = size + payload_padding;
+		remove_block(next_block);
 
 		if (free_size > METADATA_SIZE + 1) {
-			struct block_meta *new_free_block = (void *)used_block +
-												METADATA_SIZE +
-												size + payload_padding;
+			struct block_meta *new_free_block =
+					(void *)used_block + METADATA_SIZE + size + payload_padding;
 
 			new_free_block->size = free_size - METADATA_SIZE;
+			//printf("new_free_block: %u, size: %d", new_free_block,
+//				   new_free_block->size);
 			add_free_block(new_free_block);
+			//printf("PICAAAAA!!!\n");
 		} else {
 			used_block->size += free_size;
 		}
 
-		remove_block(next_block);
-
 		return ptr;
 	}
 
-	printf("WE NEED TO ALLOCATED A NEW MEMORY ZONE!\n");
+	//printf("WE NEED TO ALLOCATED A NEW MEMORY ZONE!\n");
 	struct block_meta *new_used_block = os_malloc(size) - METADATA_SIZE;
 	u_char *bytes_new_used_block = (u_char *)new_used_block;
 	u_char *bytes_used_block = (u_char *)used_block;
@@ -607,8 +665,10 @@ void *os_realloc(void *ptr, size_t size)
 	for (size_t i = METADATA_SIZE; i < size_to_copy + METADATA_SIZE; i++)
 		bytes_new_used_block[i] = bytes_used_block[i];
 
-	printf("DONE MALLOc AND WRite\n");
+	//printf("new block: %u\n", new_used_block);
 
 	os_free(ptr);
+	//printf("DONE MALLOc AND WRite\n");
+
 	return (void *)new_used_block + METADATA_SIZE;
 }
