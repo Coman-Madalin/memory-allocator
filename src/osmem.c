@@ -7,6 +7,10 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#define METADATA_SIZE        (sizeof(struct block_meta))
+#define MMAP_THRESHOLD        (128 * 1024)
+#define MULT_KB            1024
+
 static struct block_meta *used_blocks;
 
 static struct block_meta *free_blocks;
@@ -235,7 +239,6 @@ void *reuse_block_brk(size_t size)
 		// TODO: maybe rewrite this
 		if ((long)(size_to_add + payload_padding) < free_memory) {
 			remove_block(curr);
-			// added padding
 			curr->size = size + payload_padding;
 			add_used_block(curr);
 			return curr;
@@ -278,15 +281,36 @@ void *increase_brk(size_t size)
 	return used_block;
 }
 
-// TODO: rewrite this at some point more efficiently
-void *os_malloc(size_t size)
+void print_free_blocks(void)
+{
+	printf("FREE BLOCKS:\n");
+	struct block_meta *curr = free_blocks;
+
+	while (curr != NULL) {
+		printf("%u with size: %u\n", curr, curr->size);
+		curr = curr->next;
+	}
+}
+
+void print_used_blocks(void)
+{
+	printf("USED BLOCKS:\n");
+	struct block_meta *curr = used_blocks;
+
+	while (curr != NULL) {
+		printf("%u with size: %u\n", curr, curr->size);
+		curr = curr->next;
+	}
+}
+
+void *allocate_memory(size_t size, size_t threshold)
 {
 	if (size == 0)
 		return NULL;
 
 	struct block_meta *new_used_block = NULL;
 
-	if (size < MMAP_THRESHOLD) {
+	if (size + METADATA_SIZE < threshold) {
 		if (used_blocks == NULL && free_blocks == NULL)
 			prealloc_heap();
 
@@ -295,7 +319,7 @@ void *os_malloc(size_t size)
 		if (free_block == NULL) {
 			struct block_meta *used_block = increase_brk(size);
 
-			return ((void *)used_block + METADATA_SIZE);
+			return (void *)used_block + METADATA_SIZE;
 		}
 
 		new_used_block = free_block;
@@ -331,7 +355,12 @@ void *os_malloc(size_t size)
 		new_used_block->status = STATUS_MAPPED;
 	}
 
-	return ((void *)new_used_block + METADATA_SIZE);
+	return (void *)new_used_block + METADATA_SIZE;
+}
+
+void *os_malloc(size_t size)
+{
+	return allocate_memory(size, MMAP_THRESHOLD);
 }
 
 void os_free(void *ptr)
@@ -354,72 +383,17 @@ void os_free(void *ptr)
 
 void *os_calloc(size_t nmemb, size_t size)
 {
-	int total_size = nmemb * size;
+	size_t total_size = nmemb * size;
+	void *payload = allocate_memory(total_size, getpagesize());
+	u_char *bytes_new_used_block = (u_char *)payload;
 
-	if (total_size == 0)
+	if (payload == NULL)
 		return NULL;
 
-	struct block_meta *new_used_block = NULL;
+	for (size_t i = 0; i < total_size; i++)
+		bytes_new_used_block[i] = 0;
 
-	if ((int)(total_size + METADATA_SIZE) < getpagesize()) {
-		if (used_blocks == NULL && free_blocks == NULL)
-			prealloc_heap();
-
-		struct block_meta *free_block = find_place_brk(total_size);
-
-		if (free_block == NULL) {
-			new_used_block = increase_brk(total_size);
-			u_char *bytes_new_used_block = (u_char *)new_used_block;
-
-			for (size_t i = 0; i < new_used_block->size; i++)
-				bytes_new_used_block[i + METADATA_SIZE] = 0;
-
-			return ((void *)new_used_block + METADATA_SIZE);
-		}
-
-		new_used_block = free_block;
-
-		struct block_meta *new_free_block =
-				(void *)free_block + METADATA_SIZE + total_size;
-
-		size_t payload_padding = calculate_padding((size_t)new_free_block);
-
-		new_free_block = (void *)new_free_block + payload_padding;
-
-		long new_free_block_size =
-				free_block->size - total_size - payload_padding;
-
-		new_used_block->status = STATUS_ALLOC;
-
-		// enough space for another free_block
-		if (new_free_block_size >= (long)METADATA_SIZE + 1) {
-			new_free_block->size = new_free_block_size - METADATA_SIZE;
-
-			new_free_block->status = STATUS_FREE;
-			new_free_block->next = new_free_block->prev = NULL;
-
-			new_used_block->size = total_size + payload_padding;
-			add_free_block(new_free_block);
-		}
-		add_used_block(new_used_block);
-	} else {
-		size_t payload_padding = calculate_padding(total_size);
-
-		new_used_block = mmap(NULL,
-							  total_size + METADATA_SIZE + payload_padding,
-							  PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON,
-							  -1, 0);
-
-		new_used_block->size = total_size;
-		new_used_block->status = STATUS_MAPPED;
-	}
-
-	u_char *bytes_new_used_block = (u_char *)new_used_block;
-
-	for (size_t i = 0; i < new_used_block->size; i++)
-		bytes_new_used_block[i + METADATA_SIZE] = 0;
-
-	return ((void *)new_used_block + METADATA_SIZE);
+	return payload;
 }
 
 void *os_realloc(void *ptr, size_t size)
@@ -437,9 +411,9 @@ void *os_realloc(void *ptr, size_t size)
 	if (used_block->status == STATUS_FREE)
 		return NULL;
 
-	size_t size_padding = calculate_padding(size);
+	size_t payload_padding = calculate_padding(size);
 
-	if (used_block->size == size + size_padding)
+	if (used_block->size == size + payload_padding)
 		return ptr;
 
 	if (used_block->status == STATUS_MAPPED) {
@@ -461,15 +435,9 @@ void *os_realloc(void *ptr, size_t size)
 		return (void *)new_used_block + METADATA_SIZE;
 	}
 
-	size_t payload_padding = calculate_padding(size);
-	size_t remaining_size = used_block->size - size - payload_padding;
+	long remaining_size = used_block->size - size - payload_padding;
 
 	if (size < used_block->size) {
-		//TODO: maybe make this an auxiliary function that free can use too
-
-		// TODO: What should it do on the else branch?
-		//  We leave the size as it is because there is not enough space for
-		//  another free block?
 		if (remaining_size > METADATA_SIZE + 1) {
 			struct block_meta *new_free_block = (void *)used_block + METADATA_SIZE + size + payload_padding;
 
@@ -477,7 +445,6 @@ void *os_realloc(void *ptr, size_t size)
 			add_free_block(new_free_block);
 			used_block->size = size + payload_padding;
 		}
-		// If we cant add another free block, we will not change the size
 		return ptr;
 	}
 
@@ -489,11 +456,11 @@ void *os_realloc(void *ptr, size_t size)
 		return ptr;
 	}
 
-	// the end of the current block is equal to current heap size so we can just increase it
+	// the current block is the last allocated block
 	if (used_block >= next_block) {
-		size_t remaining_size_rename = size + payload_padding - used_block->size;
+		long inverse_of_remaining_size = -remaining_size;
 
-		sbrk(remaining_size_rename);
+		sbrk(inverse_of_remaining_size);
 		used_block->size = size + payload_padding;
 		return ptr;
 	}
@@ -501,8 +468,8 @@ void *os_realloc(void *ptr, size_t size)
 	if (next_block->status == STATUS_FREE &&
 		(void *)used_block + METADATA_SIZE + size + payload_padding <=
 		(void *)next_block + METADATA_SIZE + next_block->size) {
-		long free_size = (void *)next_block + next_block->size - (void *)used_block -
-						 size - payload_padding;
+		long free_size = (void *)next_block + next_block->size -
+						 (void *)used_block - size - payload_padding;
 
 		used_block->size = size + payload_padding;
 		remove_block(next_block);
