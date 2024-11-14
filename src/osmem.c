@@ -438,7 +438,7 @@ void *os_realloc(void *ptr, size_t size)
 	long remaining_size = used_block->size - size - payload_padding;
 
 	if (size < used_block->size) {
-		if (remaining_size > METADATA_SIZE + 1) {
+		if (remaining_size > (long)(METADATA_SIZE + 1)) {
 			struct block_meta *new_free_block = (void *)used_block + METADATA_SIZE + size + payload_padding;
 
 			new_free_block->size = remaining_size - METADATA_SIZE;
