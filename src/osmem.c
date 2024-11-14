@@ -7,6 +7,8 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#include "block_meta.h"
+
 #define METADATA_SIZE        (sizeof(struct block_meta))
 #define MMAP_THRESHOLD        (128 * 1024)
 #define MULT_KB            1024
@@ -232,6 +234,7 @@ void *reuse_block_brk(size_t size)
 
 	if (curr < last_used_block) {
 		long free_memory = last_used_block - curr - METADATA_SIZE;
+
 		if ((long)(size_to_add + payload_padding) < free_memory) {
 			remove_block(curr);
 			curr->size = size + payload_padding;
@@ -245,6 +248,7 @@ void *reuse_block_brk(size_t size)
 
 	// curr block is the last allocated block with brk
 	void *result = sbrk((long)(size_to_add + payload_padding));
+
 	DIE(result == (void *)-1, "brk failed!");
 
 	remove_block(curr);
@@ -265,6 +269,7 @@ void *increase_brk(size_t size)
 	size_t payload_padding = calculate_padding(size);
 
 	struct block_meta *used_block = sbrk(METADATA_SIZE + size + payload_padding);
+
 	DIE(used_block == (void *)-1, "brk failed!");
 
 	used_block->size = size + payload_padding;
@@ -349,8 +354,8 @@ void os_free(void *ptr)
 		coalesce_free_blocks();
 	} else {
 		size_t payload_padding = calculate_padding(used_block->size);
-
 		int result = munmap(used_block, METADATA_SIZE + used_block->size + payload_padding);
+
 		DIE(result == -1, "munmap failed!");
 	}
 }
@@ -433,8 +438,8 @@ void *os_realloc(void *ptr, size_t size)
 	// the current block is the last allocated block
 	if (used_block >= next_block) {
 		long inverse_of_remaining_size = -remaining_size;
-
 		void *result = sbrk(inverse_of_remaining_size);
+
 		DIE(result == (void *)-1, "brk failed!");
 		used_block->size = size + payload_padding;
 		return ptr;
