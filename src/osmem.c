@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "osmem.h"
-#include <unistd.h>
 
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -28,9 +28,7 @@ size_t calculate_padding(size_t size)
 void prealloc_heap(void)
 {
 	free_blocks = sbrk(128 * MULT_KB);
-
-	if ((long)free_blocks == -1)
-		exit(-1);
+	DIE(free_blocks == (void *)-1, "brk failed!");
 
 	free_blocks->size = 128 * MULT_KB - METADATA_SIZE;
 	free_blocks->status = STATUS_FREE;
@@ -217,8 +215,6 @@ void add_free_block(struct block_meta *block)
 	}
 }
 
-// TODO: make free_blocks circular
-// TODO: use DIE for sbrk and similar function calls
 void *reuse_block_brk(size_t size)
 {
 	struct block_meta *curr = free_blocks;
@@ -236,7 +232,6 @@ void *reuse_block_brk(size_t size)
 
 	if (curr < last_used_block) {
 		long free_memory = last_used_block - curr - METADATA_SIZE;
-		// TODO: maybe rewrite this
 		if ((long)(size_to_add + payload_padding) < free_memory) {
 			remove_block(curr);
 			curr->size = size + payload_padding;
@@ -249,7 +244,8 @@ void *reuse_block_brk(size_t size)
 	}
 
 	// curr block is the last allocated block with brk
-	sbrk(size_to_add + payload_padding);
+	void *result = sbrk((long)(size_to_add + payload_padding));
+	DIE(result == (void *)-1, "brk failed!");
 
 	remove_block(curr);
 	curr->size = size + payload_padding;
@@ -268,10 +264,8 @@ void *increase_brk(size_t size)
 
 	size_t payload_padding = calculate_padding(size);
 
-	// TODO: might need to get current brk position with sbrk(0) to pad the
-	//  metadata too
-
 	struct block_meta *used_block = sbrk(METADATA_SIZE + size + payload_padding);
+	DIE(used_block == (void *)-1, "brk failed!");
 
 	used_block->size = size + payload_padding;
 	used_block->status = STATUS_ALLOC;
@@ -279,28 +273,6 @@ void *increase_brk(size_t size)
 	add_used_block(used_block);
 
 	return used_block;
-}
-
-void print_free_blocks(void)
-{
-	printf("FREE BLOCKS:\n");
-	struct block_meta *curr = free_blocks;
-
-	while (curr != NULL) {
-		printf("%u with size: %u\n", curr, curr->size);
-		curr = curr->next;
-	}
-}
-
-void print_used_blocks(void)
-{
-	printf("USED BLOCKS:\n");
-	struct block_meta *curr = used_blocks;
-
-	while (curr != NULL) {
-		printf("%u with size: %u\n", curr, curr->size);
-		curr = curr->next;
-	}
 }
 
 void *allocate_memory(size_t size, size_t threshold)
@@ -350,6 +322,7 @@ void *allocate_memory(size_t size, size_t threshold)
 							  PROT_READ | PROT_WRITE,
 							  MAP_PRIVATE | MAP_ANON,
 							  -1, 0);
+		DIE(new_used_block == (void *) -1, "mmap failed!");
 
 		new_used_block->size = size;
 		new_used_block->status = STATUS_MAPPED;
@@ -377,7 +350,8 @@ void os_free(void *ptr)
 	} else {
 		size_t payload_padding = calculate_padding(used_block->size);
 
-		munmap(used_block, METADATA_SIZE + used_block->size + payload_padding);
+		int result = munmap(used_block, METADATA_SIZE + used_block->size + payload_padding);
+		DIE(result == -1, "munmap failed!");
 	}
 }
 
@@ -460,7 +434,8 @@ void *os_realloc(void *ptr, size_t size)
 	if (used_block >= next_block) {
 		long inverse_of_remaining_size = -remaining_size;
 
-		sbrk(inverse_of_remaining_size);
+		void *result = sbrk(inverse_of_remaining_size);
+		DIE(result == (void *)-1, "brk failed!");
 		used_block->size = size + payload_padding;
 		return ptr;
 	}
